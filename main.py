@@ -1,6 +1,7 @@
 import json
 import base64
 import requests
+import time
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
@@ -17,11 +18,10 @@ Devuelve estrictamente un objeto JSON con:
 foto = st.file_uploader("Saca una foto o sube un remito", type=["jpg", "jpeg", "png"])
 
 if foto and st.button("Procesar Remito"):
-    with st.spinner("Procesando con Gemini 3.8 Flash..."):
+    with st.spinner("Procesando con Gemini 3.8 Flash (Reintentando si hay saturación)..."):
         try:
             api_key = st.secrets["GEMINI_API_KEY"]
                 
-            # Compresión de la imagen
             imagen = Image.open(foto)
             if imagen.mode != 'RGB':
                 imagen = imagen.convert('RGB')
@@ -30,7 +30,6 @@ if foto and st.button("Procesar Remito"):
             imagen.save(buffered, format="JPEG")
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-            # Conexión directa al modelo exigido por Google
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={api_key}"
             
             payload = {
@@ -38,13 +37,20 @@ if foto and st.button("Procesar Remito"):
                 "generationConfig": {"response_mime_type": "application/json"}
             }
 
-            respuesta = requests.post(url, json=payload, timeout=60)
+            # Bucle de reintentos por saturación (Error 503)
+            respuesta = None
+            for intento in range(4):
+                respuesta = requests.post(url, json=payload, timeout=60)
+                if respuesta.status_code == 503 or respuesta.status_code == 429:
+                    time.sleep(2 ** intento)  # Espera 1, 2, 4 segundos...
+                    continue
+                else:
+                    break
             
             if respuesta.status_code != 200:
                 st.error(f"Error de API: {respuesta.text}")
                 st.stop()
                 
-            # Extracción y guardado
             datos = json.loads(respuesta.json()["candidates"][0]["content"]["parts"][0]["text"])
             st.success(f"Datos extraídos: {datos.get('proveedor')} - ${datos.get('total')}")
             
