@@ -21,7 +21,7 @@ if foto and st.button("Procesar Remito"):
     with st.spinner("Analizando con Gemini 1.5 Flash..."):
         try:
             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            model = genai.GenerativeModel("gemini-1.5-flash-latest")
             
             imagen = Image.open(foto)
             response = model.generate_content([PROMPT, imagen])
