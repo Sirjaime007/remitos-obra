@@ -1,5 +1,5 @@
 streamlit
-openai
+requests
 gspread
 google-auth
 Pillow
