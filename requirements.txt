@@ -1,5 +1,5 @@
-google-genai
 streamlit
+google-genai
 gspread
 google-auth
 Pillow
