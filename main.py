@@ -33,7 +33,7 @@ if foto and st.button("Procesar Remito"):
             )
             
             respuesta = client.chat.completions.create(
-                model="qwen/qwen-2-vl-7b-instruct:free",
+                model="openrouter/free",
                 messages=[
                     {
                         "role": "user",
