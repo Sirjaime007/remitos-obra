@@ -25,7 +25,7 @@ if foto and st.button("Procesar Remito"):
             imagen = Image.open(foto)
 
             response = client_ai.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.8-flash",
                 contents=[PROMPT, imagen],
                 config={"response_mime_type": "application/json"},
             )
