@@ -17,26 +17,11 @@ Devuelve estrictamente un objeto JSON con:
 foto = st.file_uploader("Saca una foto o sube un remito", type=["jpg", "jpeg", "png"])
 
 if foto and st.button("Procesar Remito"):
-    with st.spinner("Buscando modelo autorizado y procesando..."):
+    with st.spinner("Procesando con Gemini 3.8 Flash..."):
         try:
             api_key = st.secrets["GEMINI_API_KEY"]
-            
-            # 1. AUTO-DETECTAR EL NOMBRE EXACTO DEL MODELO
-            url_modelos = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-            respuesta_modelos = requests.get(url_modelos).json()
-            
-            modelo_detectado = None
-            for m in respuesta_modelos.get("models", []):
-                if "flash" in m.get("name", "") and "generateContent" in m.get("supportedGenerationMethods", []):
-                    # Extrae la parte final (ej. "gemini-1.5-flash-001")
-                    modelo_detectado = m["name"].split("/")[-1]
-                    break
-            
-            if not modelo_detectado:
-                st.error("❌ Tu API Key no tiene modelos Flash habilitados.")
-                st.stop()
                 
-            # 2. COMPRESIÓN DE LA IMAGEN
+            # Compresión de la imagen
             imagen = Image.open(foto)
             if imagen.mode != 'RGB':
                 imagen = imagen.convert('RGB')
@@ -45,8 +30,8 @@ if foto and st.button("Procesar Remito"):
             imagen.save(buffered, format="JPEG")
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-            # 3. CONEXIÓN DIRECTA CON EL NOMBRE DETECTADO
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo_detectado}:generateContent?key={api_key}"
+            # Conexión directa al modelo exigido por Google
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={api_key}"
             
             payload = {
                 "contents": [{"parts": [{"text": PROMPT}, {"inline_data": {"mime_type": "image/jpeg", "data": img_str}}]}],
@@ -59,7 +44,7 @@ if foto and st.button("Procesar Remito"):
                 st.error(f"Error de API: {respuesta.text}")
                 st.stop()
                 
-            # 4. EXTRACCIÓN Y GUARDADO
+            # Extracción y guardado
             datos = json.loads(respuesta.json()["candidates"][0]["content"]["parts"][0]["text"])
             st.success(f"Datos extraídos: {datos.get('proveedor')} - ${datos.get('total')}")
             
