@@ -23,7 +23,7 @@ if foto and st.button("Procesar Remito"):
         try:
             # 1. Configuración de la librería clásica
             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-            model = genai.GenerativeModel("gemini-1.5-pro-latest")
+            model = genai.GenerativeModel("gemini-1.5-flash-latest")
             
             # 2. Compresión para evitar el error 504 (timeout)
             imagen = Image.open(foto)
