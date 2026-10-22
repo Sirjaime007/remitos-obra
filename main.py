@@ -1,9 +1,7 @@
 
 import json
-import io
 import streamlit as st
 from google import genai
-from google.genai import types
 import gspread
 from google.oauth2.service_account import Credentials
 from PIL import Image
@@ -19,107 +17,96 @@ st.set_page_config(
 )
 
 st.title("📥 Carga Inteligente de Remitos")
-st.caption(
-    "Subí una imagen del remito para extraer sus datos "
-    "y guardarlos en Google Sheets."
+st.write(
+    "Subí una foto del remito, verificá los datos "
+    "y guardalos en Google Sheets."
 )
 
 PROMPT = """
-Analiza cuidadosamente la imagen del remito y extrae
-los siguientes datos.
+Analiza la imagen del remito y extrae los siguientes datos.
 
-Devuelve exclusivamente un objeto JSON válido con
-esta estructura exacta:
+Devuelve exclusivamente un objeto JSON válido con esta estructura:
 
 {
-    "fecha": "DD/MM/AAAA",
-    "numero_remito": "string",
-    "proveedor": "string",
-    "cuit": "string",
-    "total": number o null
+  "fecha": "DD/MM/AAAA",
+  "numero_remito": "string",
+  "proveedor": "string",
+  "cuit": "string",
+  "total": 1234.56
 }
 
 Reglas:
-- No inventes datos que no sean legibles.
-- Si falta un dato de texto, devuelve una cadena vacía.
+- No inventes datos.
+- Si un dato de texto no aparece o no se lee, devuelve "".
+- Si el total no se puede identificar, devuelve null.
 - El total debe ser numérico, sin símbolo monetario.
-- Usa punto decimal si hay decimales.
-- Conserva el CUIT completo.
-- Distingue el número de remito del número de factura.
-- No confundas el subtotal con el total final.
-- Devuelve únicamente el JSON, sin Markdown.
+- Usa punto decimal para los decimales.
+- Conserva todos los dígitos del CUIT.
+- No confundas número de factura con número de remito.
+- Extrae el total final del comprobante, no el subtotal.
+- Devuelve solo JSON, sin bloques Markdown.
 """
 
 # --------------------------------------------------
-# CARGA DE IMAGEN
+# SUBIR IMAGEN
 # --------------------------------------------------
 
 foto = st.file_uploader(
-    "📷 Sacá una foto o subí un remito",
+    "📷 Seleccioná una foto del remito",
     type=["jpg", "jpeg", "png"]
 )
 
 if foto:
-    st.image(
-        foto,
-        caption="Imagen del remito",
-        use_container_width=True
-    )
+    try:
+        imagen = Image.open(foto).convert("RGB")
+        imagen.thumbnail((1600, 1600))
+
+        st.image(
+            imagen,
+            caption="Remito cargado",
+            use_container_width=True
+        )
+
+    except Exception:
+        st.error("No se pudo abrir la imagen.")
+        st.stop()
 
 # --------------------------------------------------
-# PROCESAMIENTO
+# PROCESAR REMITO CON GEMINI
 # --------------------------------------------------
 
 if foto and st.button(
-    "Procesar Remito",
+    "🔍 Procesar remito",
     type="primary",
     use_container_width=True
 ):
 
     try:
-        # 1. Preparar la imagen
-        with st.spinner("Preparando imagen..."):
+        with st.spinner("Gemini está analizando el remito..."):
 
-            imagen = Image.open(foto).convert("RGB")
-            imagen.thumbnail((1600, 1600))
-
-            buffer = io.BytesIO()
-            imagen.save(buffer, format="JPEG", quality=90)
-            imagen_bytes = buffer.getvalue()
-
-        # 2. Conectar con Gemini
-        with st.spinner("Gemini está leyendo el remito..."):
-
-            api_key = st.secrets["GEMINI_API_KEY"]
-            client = genai.Client(api_key=api_key)
-
-            # API de Interactions con imagen y texto
-            response = client.interactions.create(
-                model="gemini-3.8-flash",
-                input=[
-                    {
-                        "type": "text",
-                        "text": PROMPT
-                    },
-                    {
-                        "type": "image",
-                        "data": imagen_bytes,
-                        "mime_type": "image/jpeg"
-                    }
-                ]
+            client = genai.Client(
+                api_key=st.secrets["GEMINI_API_KEY"]
             )
 
-            texto = response.output_text
+            response = client.models.generate_content(
+                model="gemini-3.8-flash",
+                contents=[
+                    PROMPT,
+                    imagen
+                ],
+                config={
+                    "response_mime_type": "application/json"
+                }
+            )
 
-            if not texto:
+            if not response.text:
                 raise ValueError(
-                    "Gemini no devolvió texto. "
-                    "Intentá con una imagen más nítida."
+                    "Gemini no devolvió una respuesta."
                 )
 
-            # Limpiar posibles bloques Markdown
-            texto = texto.strip()
+            texto = response.text.strip()
 
+            # Limpiar Markdown si apareciera
             if texto.startswith("```"):
                 texto = texto.replace("```json", "", 1)
                 texto = texto.replace("```", "")
@@ -127,53 +114,102 @@ if foto and st.button(
 
             datos = json.loads(texto)
 
-        # 3. Normalizar los campos
-        campos_texto = [
-            "fecha",
-            "numero_remito",
-            "proveedor",
-            "cuit"
-        ]
-
-        for campo in campos_texto:
-            valor = datos.get(campo, "")
-            datos[campo] = "" if valor is None else str(valor)
-
-        total = datos.get("total")
-
-        if total is not None:
-            if isinstance(total, bool):
-                raise ValueError(
-                    "El total devuelto no es numérico."
+            # Normalizar los campos de texto
+            for campo in [
+                "fecha",
+                "numero_remito",
+                "proveedor",
+                "cuit"
+            ]:
+                valor = datos.get(campo, "")
+                datos[campo] = (
+                    "" if valor is None else str(valor)
                 )
-            total = float(total)
 
-        datos["total"] = total
+            total = datos.get("total")
 
-        # 4. Mostrar datos detectados
-        st.subheader("📋 Datos detectados")
+            if total is not None:
+                if isinstance(total, bool):
+                    raise ValueError(
+                        "El total extraído no es válido."
+                    )
 
-        st.write("**Fecha:**", datos["fecha"])
-        st.write("**Número de remito:**", datos["numero_remito"])
-        st.write("**Proveedor:**", datos["proveedor"])
-        st.write("**CUIT:**", datos["cuit"])
-        st.write("**Total:**", datos["total"])
+                total = float(total)
 
-        # 5. Confirmar antes de guardar
-        st.warning(
-            "Verificá que los datos coincidan con el remito "
-            "antes de registrarlos."
+            datos["total"] = total
+
+            # Guardar los datos en la sesión
+            st.session_state["remito_procesado"] = datos
+
+    except json.JSONDecodeError:
+        st.error(
+            "Gemini no devolvió un JSON válido. "
+            "Intentá con una foto más clara."
         )
 
-        if st.button(
-            "Confirmar y guardar en Google Sheets",
-            type="primary",
+    except Exception as e:
+        st.error(f"❌ Error al procesar el remito: {e}")
+
+# --------------------------------------------------
+# REVISAR Y GUARDAR
+# --------------------------------------------------
+
+if "remito_procesado" in st.session_state:
+
+    st.subheader("📋 Revisar datos extraídos")
+
+    datos = st.session_state["remito_procesado"]
+
+    with st.form("form_remito"):
+
+        fecha = st.text_input(
+            "Fecha",
+            value=datos["fecha"]
+        )
+
+        numero_remito = st.text_input(
+            "Número de remito",
+            value=datos["numero_remito"]
+        )
+
+        proveedor = st.text_input(
+            "Proveedor",
+            value=datos["proveedor"]
+        )
+
+        cuit = st.text_input(
+            "CUIT",
+            value=datos["cuit"]
+        )
+
+        total_texto = st.text_input(
+            "Total",
+            value=(
+                str(datos["total"])
+                if datos["total"] is not None
+                else ""
+            )
+        )
+
+        guardar = st.form_submit_button(
+            "✅ Confirmar y guardar en Google Sheets",
             use_container_width=True
-        ):
+        )
+
+    if guardar:
+
+        try:
+            # Validar total
+            total_limpio = total_texto.strip()
+
+            if total_limpio:
+                total_limpio = total_limpio.replace(",", ".")
+                total_final = float(total_limpio)
+            else:
+                total_final = None
 
             with st.spinner("Guardando en Google Sheets..."):
 
-                # Credenciales de Google
                 cred_dict = json.loads(
                     st.secrets["GOOGLE_JSON"]
                 )
@@ -188,42 +224,39 @@ if foto and st.button(
                     scopes=scope
                 )
 
-                client_gs = gspread.authorize(creds)
+                cliente_sheets = gspread.authorize(creds)
 
-                # Abrir planilla
-                spreadsheet = client_gs.open_by_key(
+                planilla = cliente_sheets.open_by_key(
                     st.secrets["SHEET_ID"]
                 )
 
-                sheet = spreadsheet.sheet1
+                hoja = planilla.sheet1
 
-                # Guardar fila
-                sheet.append_row(
+                # Agregar una fila en el orden de las columnas
+                hoja.append_row(
                     [
-                        datos["fecha"],
-                        datos["numero_remito"],
-                        datos["proveedor"],
-                        datos["cuit"],
-                        datos["total"]
+                        fecha,
+                        numero_remito,
+                        proveedor,
+                        cuit,
+                        total_final
                     ],
                     value_input_option="USER_ENTERED"
                 )
 
             st.success(
-                "✅ ¡Remito guardado correctamente en Google Sheets!"
+                "✅ Remito guardado correctamente en Google Sheets."
             )
 
-    except json.JSONDecodeError:
-        st.error(
-            "Gemini no devolvió un JSON válido. "
-            "Intentá nuevamente con una imagen más clara."
-        )
+            del st.session_state["remito_procesado"]
 
-    except KeyError as e:
-        st.error(
-            f"Falta una configuración en Secrets: {e}. "
-            "Revisá GEMINI_API_KEY, GOOGLE_JSON y SHEET_ID."
-        )
+        except ValueError:
+            st.error(
+                "El total debe ser numérico. "
+                "Ejemplo: 12500.50"
+            )
 
-    except Exception as e:
-        st.error(f"❌ Error: {str(e)}")
+        except Exception as e:
+            st.error(
+                f"❌ Error al guardar en Google Sheets: {e}"
+            )
