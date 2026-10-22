@@ -1,9 +1,10 @@
+import time
+import json
 import streamlit as st
 from google import genai
 from google.genai import types
 import gspread
 from google.oauth2.service_account import Credentials
-import json
 from PIL import Image
 
 st.set_page_config(page_title="Control Remitos", layout="centered")
@@ -16,23 +17,44 @@ Devuelve estrictamente un objeto JSON con los siguientes campos:
 No agregues texto adicional.
 """
 
+MODELOS = ["gemini-flash-latest", "gemini-flash-lite-latest"]
+
 foto = st.file_uploader("Saca una foto o sube un remito", type=["jpg", "jpeg", "png"])
 
 if foto and st.button("Procesar Remito"):
     with st.spinner("Analizando con Gemini..."):
         try:
-            # 1) Gemini (con timeout de 60 s para que no se quede colgado)
+            # 1) Gemini, con reintentos y modelo de respaldo
             client_ai = genai.Client(
                 api_key=st.secrets["GEMINI_API_KEY"],
                 http_options=types.HttpOptions(timeout=60000),
             )
             imagen = Image.open(foto)
 
-            response = client_ai.models.generate_content(
-                model="gemini-flash-latest",
-                contents=[PROMPT, imagen],
-                config={"response_mime_type": "application/json"},
-            )
+            response = None
+            ultimo_error = None
+
+            for modelo in MODELOS:
+                for intento in range(3):
+                    try:
+                        response = client_ai.models.generate_content(
+                            model=modelo,
+                            contents=[PROMPT, imagen],
+                            config={"response_mime_type": "application/json"},
+                        )
+                        break
+                    except Exception as e:
+                        ultimo_error = e
+                        if "503" in str(e) or "429" in str(e):
+                            time.sleep(2 ** intento)  # espera 1, 2, 4 segundos
+                        else:
+                            raise
+                if response:
+                    break
+
+            if response is None:
+                raise ultimo_error
+
             datos = json.loads(response.text)
 
             st.success(f"Datos extraídos: {datos.get('proveedor')} - ${datos.get('total')}")
