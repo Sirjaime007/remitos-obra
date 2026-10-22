@@ -1,5 +1,6 @@
 import streamlit as st
 from google import genai
+from google.genai import types
 import gspread
 from google.oauth2.service_account import Credentials
 import json
@@ -20,12 +21,15 @@ foto = st.file_uploader("Saca una foto o sube un remito", type=["jpg", "jpeg", "
 if foto and st.button("Procesar Remito"):
     with st.spinner("Analizando con Gemini..."):
         try:
-            # 1) Gemini
-            client_ai = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+            # 1) Gemini (con timeout de 60 s para que no se quede colgado)
+            client_ai = genai.Client(
+                api_key=st.secrets["GEMINI_API_KEY"],
+                http_options=types.HttpOptions(timeout=60000),
+            )
             imagen = Image.open(foto)
 
             response = client_ai.models.generate_content(
-                model="gemini-3.8-flash",
+                model="gemini-flash-latest",
                 contents=[PROMPT, imagen],
                 config={"response_mime_type": "application/json"},
             )
